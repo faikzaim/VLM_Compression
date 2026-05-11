@@ -1,0 +1,16 @@
+/eval/ 
+cache_dir/ 
+__pycache__/ 
+*.pyc 
+*.pth 
+*.bin 
+*.safetensors
+*.egg-info/
+.idea
+*.mp4
+*.ipynb
+evaluation_results/
+/video_subsets/
+*json
+GPT_Zero_Shot_QA/
+videollava/model/language_model/mpt/__pycache__/*

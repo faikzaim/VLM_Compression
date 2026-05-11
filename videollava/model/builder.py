@@ -22,9 +22,10 @@ import torch
 from videollava.model import *
 from videollava.constants import DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, \
     DEFAULT_VIDEO_PATCH_TOKEN, DEFAULT_VID_START_TOKEN, DEFAULT_VID_END_TOKEN
+from videollava.model.compressor.llava_compressed import LlavaLlamaForCausalLMWithCompression
 
 
-def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", **kwargs):
+def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda", compressor_config=None, **kwargs):
     kwargs = {"device_map": device_map, **kwargs}
 
     if device != "cuda":
@@ -104,7 +105,12 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
                 model = LlavaMPTForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
             else:
                 tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-                model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
+                # If compressor config is present, instantiate the model with compressor module instead.
+                if compressor_config:
+                    model = LlavaLlamaForCausalLMWithCompression.from_pretrained(model_path, low_cpu_mem_usage=True, compressor_config=compressor_config, **kwargs)
+                else:
+                    model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
+
     else:
         # Load language model
         if model_base is not None:

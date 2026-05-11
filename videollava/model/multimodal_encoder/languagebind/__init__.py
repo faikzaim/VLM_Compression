@@ -215,17 +215,24 @@ class LanguageBindVideoTower(nn.Module):
         # return video_features
 
     @torch.no_grad()
-    def forward(self, videos):
+    def forward(self, videos, output_attentions=False):
+        video_attentions = None
         if type(videos) is list:
             video_features = []
+            video_attentions = []
             for video in videos:
-                video_forward_out = self.video_tower(video.to(device=self.device, dtype=self.dtype).unsqueeze(0), output_hidden_states=True)
+                video_forward_out = self.video_tower(video.to(device=self.device, dtype=self.dtype).unsqueeze(0), output_hidden_states=True, output_attentions=output_attentions)
                 video_feature = self.feature_select(video_forward_out).to(video.dtype)
                 video_features.append(video_feature)
+                if output_attentions:
+                    video_attentions.append(video_forward_out.attentions[self.select_layer])
         else:
-            video_forward_outs = self.video_tower(videos.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
+            video_forward_outs = self.video_tower(videos.to(device=self.device, dtype=self.dtype), output_hidden_states=True, output_attentions=output_attentions)
             video_features = self.feature_select(video_forward_outs).to(videos.dtype)
-
+            if output_attentions:
+                video_attentions = video_forward_outs.attentions[self.select_layer]
+        if output_attentions:
+            return video_features, video_attentions
         return video_features
 
     @property

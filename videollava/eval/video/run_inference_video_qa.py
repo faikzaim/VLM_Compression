@@ -1,10 +1,13 @@
+
 import math
 import os
 import argparse
 import json
+import random
 
 import torch
 import transformers
+from monitor_module import MonitoringModule
 from tqdm import tqdm
 from videollava.conversation import conv_templates, SeparatorStyle
 from videollava.constants import DEFAULT_IM_START_TOKEN, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, IMAGE_TOKEN_INDEX, DEFAULT_VID_START_TOKEN, DEFAULT_VID_END_TOKEN
@@ -43,10 +46,16 @@ def parse_args():
     parser.add_argument("--device", type=str, required=False, default='cuda:0')
     parser.add_argument('--model_base', help='', default=None, type=str, required=False)
     parser.add_argument("--model_max_length", type=int, required=False, default=2048)
+    parser.add_argument("--sample_ratio", type=float, required=False, default=1.0)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--merge_count", type=int, required=False, default=None)
+    parser.add_argument("--prune_count", type=int, required=False, default=None)
+    parser.add_argument("--max_new_tokens", type=int, required=False, default=1024)
 
     return parser.parse_args()
 
 def get_model_output(model, video_processor, tokenizer, video, qs, args):
+
     if model.config.mm_use_im_start_end:
         qs = DEFAULT_VID_START_TOKEN + ''.join([DEFAULT_IMAGE_TOKEN]*8) + DEFAULT_VID_END_TOKEN + '\n' + qs
     else:
@@ -73,9 +82,9 @@ def get_model_output(model, video_processor, tokenizer, video, qs, args):
         output_ids = model.generate(
             input_ids,
             images=[video_tensor],
-            do_sample=True,
+            do_sample=False,
             temperature=0.0,
-            max_new_tokens=1024,
+            max_new_tokens=args.max_new_tokens,
             use_cache=True,
             stopping_criteria=[stopping_criteria])
 
@@ -101,8 +110,24 @@ def run_inference(args):
     """
     # Initialize the model
     model_name = get_model_name_from_path(args.model_path)
-    tokenizer, model, processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name)
-    model = model.to(args.device)
+
+    compressor_config = {}
+    if args.merge_count:
+        compressor_config['merge_count'] = args.merge_count
+    if args.prune_count:
+        compressor_config['prune_count'] = args.prune_count
+
+    if not compressor_config:
+        compressor_config = None
+
+    tokenizer, model, processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, load_4bit=True, compressor_config=compressor_config)
+    print(f"Model device: {model.device}") # ADD THIS
+    print(f"Is 4-bit: {getattr(model, 'is_loaded_in_4bit', False)}")  # ADD THIS
+    print("Compression config:", compressor_config)
+    # model = model.to(args.device)
+
+    # Wrap the model around a monitoring model, allowing us to get latency, token count results.
+    model = MonitoringModule(model)
 
     # Load both ground truth file containing questions and answers
     # with open(args.gt_file_question) as file:
@@ -111,9 +136,25 @@ def run_inference(args):
     #     gt_answers = json.load(file)
 
     gt_questions = json.load(open(args.gt_file_question, "r"))
-    gt_questions = get_chunk(gt_questions, args.num_chunks, args.chunk_idx)
     gt_answers = json.load(open(args.gt_file_answers, "r"))
-    # gt_answers = get_chunk(gt_answers, args.num_chunks, args.chunk_idx)
+
+    assert len(gt_questions) == len(gt_answers)
+
+    total_size = len(gt_questions)
+    sample_size = int(total_size * args.sample_ratio)
+
+    random.seed(args.seed)
+    indices = random.sample(range(total_size), sample_size)
+
+    indices.sort()
+
+    gt_questions = [gt_questions[i] for i in indices]
+    gt_answers = [gt_answers[i] for i in indices]
+
+    print(f"Using subset: {sample_size}/{total_size} samples (seed={args.seed})")
+
+    gt_questions = get_chunk(gt_questions, args.num_chunks, args.chunk_idx)
+    gt_answers = get_chunk(gt_answers, args.num_chunks, args.chunk_idx)
 
     answers_file = os.path.join(args.output_dir, f"{args.output_name}.json")
     os.makedirs(args.output_dir, exist_ok=True)
@@ -131,6 +172,7 @@ def run_inference(args):
     # Iterate over each sample in the ground truth file
     index = 0
     for sample in tqdm(gt_questions):
+
         video_name = sample['video_name']
         question = sample['question']
         id = sample['question_id']
@@ -148,6 +190,12 @@ def run_inference(args):
                 # Run inference on the video and add the output to the list
                 output = get_model_output(model, processor['video'], tokenizer, video_path, question, args)
                 sample_set['pred'] = output
+
+                # Record inference and token count
+                if hasattr(model, 'inference_results'):
+                    if latency := model.inference_results.get("inference_latency"):
+                        sample_set["inference_latency"] = latency
+
                 output_list.append(sample_set)
                 # except Exception as e:
                 #     print(f"Error processing video file '{video_name}': {e}")

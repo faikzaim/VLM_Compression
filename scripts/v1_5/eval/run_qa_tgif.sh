@@ -1,7 +1,7 @@
 
 
 CKPT_NAME="Video-LLaVA-7B"
-model_path="checkpoints/${CKPT_NAME}"
+model_path="LanguageBind/Video-LLaVA-7B"
 cache_dir="./cache_dir"
 GPT_Zero_Shot_QA="eval/GPT_Zero_Shot_QA"
 video_dir="${GPT_Zero_Shot_QA}/TGIF_Zero_Shot_QA/mp4"
